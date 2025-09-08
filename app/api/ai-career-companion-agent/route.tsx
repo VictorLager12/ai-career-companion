@@ -26,7 +26,7 @@ return NextResponse.json(runStatus.data?.[0].output?.output[0])
 
 }
 
-export async function getRuns(runId: string) {
+ async function getRuns(runId: string) {
   // Deleted: const result=await axios.get(process.env.INNGEST_SERVER_HOST+'/v1/events/'+{runId}+'/runs', {
   const result = await axios.get(`${process.env.INNGEST_SERVER_HOST}/v1/events/${runId}/runs`, {
     headers: {
