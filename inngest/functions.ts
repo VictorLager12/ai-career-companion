@@ -5,8 +5,7 @@ import ImageKit from "imagekit";
 import { db } from "@/configs/db";
 
 export const helloWorld = inngest.createFunction(
-  { id: "hello-world" },
-  { event: "test/hello.world" },
+  { id: "hello-world", triggers: { event: "test/hello.world" } },
   async ({ event, step }) => {
     await step.sleep("wait-a-moment", "1s");
     return { message: `Hello ${event.data.email}!` };
@@ -155,7 +154,7 @@ Always ensure roadmaps are **realistic, structured, and immediately actionable**
 
   `,
   model: gemini({
-    model: "gemini-2.5-flash-lite",
+    model: "gemini-3.5-flash-lite",
     apiKey: process.env.GEMINI_API_KEY,
   }),
 });
@@ -164,8 +163,7 @@ Always ensure roadmaps are **realistic, structured, and immediately actionable**
 
 
 export const AiCareerCompanion = inngest.createFunction(
-  { id: "AiCareerCompanion" },
-  { event: "AiCareerCompanion" },
+  { id: "AiCareerCompanion", triggers: { event: "AiCareerCompanion" } },
   async ({ event, step }) => {
     const { userInput } = await event?.data;
     const result = await AiCareerCompanionAgent.run(userInput);
@@ -294,14 +292,13 @@ export const AiResumeAnalyzerAgent = createAgent({
     }
     `,
   model: gemini({
-    model: "gemini-2.5-flash-lite",
+    model: "gemini-3.5-flash-lite",
     apiKey: process.env.GEMINI_API_KEY,
   }),
 });
 
 export const AiResumeAgent = inngest.createFunction(
-  { id: "AiResumeAgent" },
-  { event: "AiResumeAgent" },
+  { id: "AiResumeAgent", triggers: { event: "AiResumeAgent" } },
   async ({ event, step }) => {
     const { recordId, base64ResumeFile, pdfText, aiAgentType, userEmail } = await event.data;
     // Upload file to Cloud
