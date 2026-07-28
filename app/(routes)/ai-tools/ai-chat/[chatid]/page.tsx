@@ -86,15 +86,9 @@ function AiChat() {
     await sendToAI(input, updatedHistory);
   };
 
-  // Edit only updates the stored text for that message — it does not call the
-  // AI again. The existing messagesList-change effect below persists it.
-  const onEditMessage = (index: number, newContent: string) => {
-    setMessagesList((prev) => {
-      const updated = [...prev];
-      updated[index] = { ...updated[index], content: newContent };
-      return updated;
-    });
-  };
+  // Edit-and-regenerate is handled by onRetryMessage below — Save reuses the
+  // same truncate + sendToAI logic Retry already uses, just with the newly
+  // edited text.
 
   // Retry: truncates the conversation to end at this user message (dropping
   // whatever came after it, including a stale assistant reply), applies the
@@ -166,7 +160,7 @@ function AiChat() {
                 key={index}
                 message={message}
                 disabled={loading}
-                onEditSave={(newContent) => onEditMessage(index, newContent)}
+                onEditAndRegenerate={(newContent) => onRetryMessage(index, newContent)}
                 onRetry={(content) => onRetryMessage(index, content)}
               />
             ))}

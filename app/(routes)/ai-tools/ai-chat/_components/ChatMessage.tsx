@@ -15,11 +15,29 @@ type Message = {
 interface ChatMessageProps {
   message: Message;
   disabled: boolean; // true while an AI response is in flight, to avoid overlapping edits/retries
-  onEditSave: (newContent: string) => void;
+  onEditAndRegenerate: (newContent: string) => void;
   onRetry: (content: string) => void;
 }
 
-function ChatMessage({ message, disabled, onEditSave, onRetry }: ChatMessageProps) {
+// Custom link renderer for ReactMarkdown: makes links clearly distinguishable
+// from surrounding text (underlined + themed color, matching the app's
+// existing primary color used elsewhere e.g. on buttons) and always opens
+// them in a new tab so the chat session is never navigated away from.
+const markdownComponents = {
+  a: ({ href, children, ...props }: any) => (
+    <a
+      href={href}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="text-primary underline underline-offset-2 hover:opacity-80"
+      {...props}
+    >
+      {children}
+    </a>
+  ),
+};
+
+function ChatMessage({ message, disabled, onEditAndRegenerate, onRetry }: ChatMessageProps) {
   const [isEditing, setIsEditing] = useState(false);
   const [draft, setDraft] = useState("");
   const [copied, setCopied] = useState(false);
@@ -45,7 +63,7 @@ function ChatMessage({ message, disabled, onEditSave, onRetry }: ChatMessageProp
 
   const saveEdit = () => {
     if (!draft.trim()) return;
-    onEditSave(draft);
+    onEditAndRegenerate(draft);
     setIsEditing(false);
   };
 
@@ -79,7 +97,7 @@ function ChatMessage({ message, disabled, onEditSave, onRetry }: ChatMessageProp
               </div>
             </div>
           ) : (
-            <ReactMarkdown>{textContent}</ReactMarkdown>
+            <ReactMarkdown components={markdownComponents}>{textContent}</ReactMarkdown>
           )}
         </div>
 
