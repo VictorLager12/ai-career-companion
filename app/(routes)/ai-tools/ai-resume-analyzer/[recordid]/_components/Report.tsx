@@ -7,8 +7,32 @@ import React, { useState } from 'react';
 /**
  * Report component to display AI analysis results.
  */
-function Report({ aiReport }: any) {
+function Report({ aiReport, status = 'ready' }: any) {
   const [openResumeUpload, setOpenResumeUpload] = useState(false);
+
+  if (status === 'failed') {
+    return (
+      <div className="bg-gray-50 text-gray-800 h-full flex items-center justify-center p-8">
+        <div className="text-center">
+          <h1 className="text-2xl font-bold text-red-600">Analysis Failed</h1>
+          <p className="text-gray-500 mt-2">
+            We couldn't generate your resume analysis. This can happen due to a temporary issue on our end.
+          </p>
+          <Button
+            type="button"
+            onClick={() => setOpenResumeUpload(true)}
+            className="mt-5 bg-teal-600 hover:bg-teal-700 text-white"
+          >
+            Try Again <Sparkle className="ml-2 h-4 w-4" />
+          </Button>
+        </div>
+        <ResumeUploadDialog
+          openResumeUpload={openResumeUpload}
+          setOpenResumeUpload={() => setOpenResumeUpload(false)}
+        />
+      </div>
+    );
+  }
 
   if (!aiReport) {
     return (

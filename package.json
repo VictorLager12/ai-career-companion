@@ -11,8 +11,7 @@
   "dependencies": {
     "@clerk/nextjs": "^6.20.0",
     "@inngest/agent-kit": "^0.13.2",
-    "@langchain/community": "^0.3.53",
-    "@langchain/core": "^0.3.72",
+    "@llamaindex/llama-cloud": "^2.13.0",
     "@neondatabase/serverless": "^0.10.4",
     "@opentelemetry/winston-transport": "^0.15.0",
     "@radix-ui/react-alert-dialog": "^1.1.15",

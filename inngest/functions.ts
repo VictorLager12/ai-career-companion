@@ -1,7 +1,6 @@
 import { HistoryTable } from "@/configs/schema";
 import { inngest } from "./client";
 import { createAgent, gemini } from "@inngest/agent-kit";
-import ImageKit from "imagekit";
 import { db } from "@/configs/db";
 
 export const helloWorld = inngest.createFunction(
@@ -171,15 +170,6 @@ export const AiCareerCompanion = inngest.createFunction(
   }
 );
 
-var imagekit = new ImageKit({
-  //@ts-ignore
-  publicKey: process.env.IMAGEKIT_PUBLIC_KEY,
-  //@ts-ignore
-  privateKey: process.env.IMAGEKIT_PRIVATE_KEY,
-  //@ts-ignore
-  urlEndpoint: process.env.IMAGEKIT_ENDPOINT_URL,
-});
-
 export const AiResumeAnalyzerAgent = createAgent({
   name: "AiResumeAnalyzerAgent",
   description: "A rigorous AI agent that validates and analyzes resumes with zero-tolerance for inaccuracy.",
@@ -297,43 +287,37 @@ export const AiResumeAnalyzerAgent = createAgent({
   }),
 });
 
+// NOTE: Document parsing (LlamaParse) and file storage (ImageKit) now happen
+// synchronously in app/api/ai-resume-agent/route.ts, before this event is
+// sent. This function receives the already-extracted text and file URL as
+// plain strings, keeping this event well under Inngest's event payload
+// ceiling (256KiB on the Free plan) — the raw base64 file previously sent
+// here was already close to that limit for a single PDF, and would be worse
+// for DOCX/PPTX/scanned images.
 export const AiResumeAgent = inngest.createFunction(
   { id: "AiResumeAgent", triggers: { event: "AiResumeAgent" } },
   async ({ event, step }) => {
-    const { recordId, base64ResumeFile, pdfText, aiAgentType, userEmail } = await event.data;
-    // Upload file to Cloud
-    const uploadFileUrl = await step.run("uploadImage", async () => {
-      const imageKitFile = await imagekit.upload({
-        file: base64ResumeFile,
-        fileName: `${Date.now()}.pdf`,
-        isPublished: true,
-      });
+    const { recordId, extractedText, fileUrl, aiAgentType, userEmail } = await event.data;
 
-      return imageKitFile.url;
-    });
-
-    const aiResumeReport = await AiResumeAnalyzerAgent.run(pdfText);
+    const aiResumeReport = await AiResumeAnalyzerAgent.run(extractedText);
     // @ts-ignore
     const rawContent = aiResumeReport.output[0].content;
     const rawContentJson = rawContent.replace('```json', '').replace('```', '');
     const parseJson = JSON.parse(rawContentJson);
-    // return parseJson;
 
     //Save to DB
     const saveToDb = await step.run('SaveToDb', async () => {
-      const result =  await db.insert(HistoryTable).values({
-  recordId: recordId,        // must match schema key
-  content: parseJson,        // ✅ jsonb column
-  aiAgentType: aiAgentType,  // ✅ varchar
-  createdAt: new Date().toISOString(), // createdAt is varchar, not timestamp
-  userEmail: userEmail,      // ✅ foreign key reference
-  metaData: uploadFileUrl
-});
-    console.log(result);
-    return parseJson;
-})
-
+      const result = await db.insert(HistoryTable).values({
+        recordId: recordId,        // must match schema key
+        content: parseJson,        // ✅ jsonb column
+        aiAgentType: aiAgentType,  // ✅ varchar
+        createdAt: new Date().toISOString(), // createdAt is varchar, not timestamp
+        userEmail: userEmail,      // ✅ foreign key reference
+        metaData: fileUrl
+      });
+      console.log(result);
+      return parseJson;
+    })
 
   }
 );
-
