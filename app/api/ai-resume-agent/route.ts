@@ -6,10 +6,9 @@ import { inngest } from "@/inngest/client";
 import { currentUser } from "@clerk/nextjs/server";
 
 export const runtime = "nodejs";
-// LlamaParse (agentic tier) + ImageKit upload happen synchronously in this
-// route. This no longer includes a wait for the Inngest job to complete
-// (see note near the bottom of this file), so 90s is comfortable headroom
-// for a slow parse without stacking an extra internal wait on top of it.
+// LlamaParse (fast tier) + ImageKit upload run in parallel in this route (see
+// below). This does not include a wait for the Inngest job to complete (see
+// note near the bottom of this file), so 90s is comfortable headroom.
 export const maxDuration = 90;
 
 // Vercel Node.js serverless functions have a hard ~4.5MB request body limit.
@@ -79,69 +78,93 @@ export async function POST(req: NextRequest) {
   const buffer = Buffer.from(arrayBuffer);
   const base64 = buffer.toString("base64");
 
-  // --- Parse the document with LlamaParse (handles PDF, DOCX, PPTX, and scanned/image docs via OCR) ---
-  let extractedText: string;
-  try {
+  const pipelineStart = Date.now();
+
+  // --- Parse the document with LlamaParse (PDF, DOCX, PPTX, and scanned/image
+  // docs via OCR) AND upload the original file to ImageKit for the preview
+  // panel, IN PARALLEL. Neither depends on the other's output, so there's no
+  // reason to run them sequentially.
+  //
+  // Tier changed from "agentic" to "fast": LlamaParse's own docs report parsing
+  // averages ~45s, and attribute the difference between tiers specifically to
+  // documents needing complex-table/chart reasoning — not typical for resumes,
+  // which are short, well-structured, mostly-text documents. "fast" is both
+  // the quickest and cheapest tier. If parse quality on some file noticeably
+  // suffers, "cost_effective" is a middle ground (still far faster than
+  // agentic — see the timing logs below to confirm before changing further).
+  const parsePromise = (async () => {
+    const t0 = Date.now();
     const uploadedFile = await llamaCloud.files.create({
       file: new File([buffer], originalFileName, {
         type: resumeFile.type || "application/octet-stream",
       }),
       purpose: "parse",
     });
+    const t1 = Date.now();
+    console.log(`[timing] LlamaParse file upload: ${t1 - t0}ms`);
 
     const parseResult = await llamaCloud.parsing.parse({
       file_id: uploadedFile.id,
-      tier: "agentic",
+      tier: "fast",
       version: "latest",
       expand: ["markdown"],
     });
+    const t2 = Date.now();
+    console.log(`[timing] LlamaParse parse (tier=fast): ${t2 - t1}ms`);
 
-    if (!parseResult.markdown) {
-      return NextResponse.json(
-        { error: "We couldn't extract any readable content from this file. Please try a different file." },
-        { status: 422 }
-      );
-    }
+    return parseResult;
+  })();
 
-    extractedText = parseResult.markdown.pages
-      .map((page: any) => page.markdown)
-      .join("\n\n---\n\n")
-      .trim();
-
-    if (!extractedText) {
-      return NextResponse.json(
-        { error: "We couldn't extract any readable content from this file. Please try a different file." },
-        { status: 422 }
-      );
-    }
-  } catch (error) {
-    console.error("LlamaParse error:", error);
-    return NextResponse.json(
-      { error: "Something went wrong while reading your document. Please try again." },
-      { status: 502 }
-    );
-  }
-
-  // --- Upload original file to ImageKit for the preview panel ---
-  let uploadFileUrl: string;
-  try {
+  const imageKitPromise = (async () => {
+    const t0 = Date.now();
     const imageKitFile = await imagekit.upload({
       file: base64,
       fileName: `${Date.now()}.${extension}`,
       isPublished: true,
     });
-    uploadFileUrl = imageKitFile.url;
+    console.log(`[timing] ImageKit upload: ${Date.now() - t0}ms`);
+    return imageKitFile;
+  })();
+
+  let parseResult: Awaited<typeof parsePromise>;
+  let imageKitFile: Awaited<typeof imageKitPromise>;
+  try {
+    [parseResult, imageKitFile] = await Promise.all([parsePromise, imageKitPromise]);
   } catch (error) {
-    console.error("ImageKit upload error:", error);
+    console.error("Document processing error:", error);
     return NextResponse.json(
-      { error: "Something went wrong while saving your file. Please try again." },
+      { error: "Something went wrong while processing your document. Please try again." },
       { status: 502 }
     );
   }
 
+  console.log(`[timing] Parse + upload stage (parallel) total: ${Date.now() - pipelineStart}ms`);
+
+  if (!parseResult.markdown) {
+    return NextResponse.json(
+      { error: "We couldn't extract any readable content from this file. Please try a different file." },
+      { status: 422 }
+    );
+  }
+
+  const extractedText = parseResult.markdown.pages
+    .map((page: any) => page.markdown)
+    .join("\n\n---\n\n")
+    .trim();
+
+  if (!extractedText) {
+    return NextResponse.json(
+      { error: "We couldn't extract any readable content from this file. Please try a different file." },
+      { status: 422 }
+    );
+  }
+
+  const uploadFileUrl: string = imageKitFile.url;
+
   // --- Kick off the AI analysis job. Only small strings go through the Inngest
   // event now (Inngest's Free plan caps event payloads at 256KiB, which the raw
   // base64 file was already close to). ---
+  const sendStart = Date.now();
   const resultIds = await inngest.send({
     name: "AiResumeAgent",
     data: {
@@ -152,6 +175,8 @@ export async function POST(req: NextRequest) {
       userEmail: user?.primaryEmailAddress?.emailAddress,
     },
   });
+  console.log(`[timing] inngest.send: ${Date.now() - sendStart}ms`);
+  console.log(`[timing] Total route time: ${Date.now() - pipelineStart}ms`);
 
   const runId = resultIds?.ids?.[0];
   if (!runId) {

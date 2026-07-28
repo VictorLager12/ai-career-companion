@@ -5,8 +5,8 @@ import { Textarea } from "@/components/ui/textarea";
 import { Loader2, SendIcon } from "lucide-react";
 import React, { useState, useEffect } from "react";
 import EmptyState from "../_components/EmptyState";
+import ChatMessage from "../_components/ChatMessage";
 import axios from "axios";
-import ReactMarkdown from "react-markdown";
 import { useParams, useRouter } from "next/navigation";
 import { v4 as uuidv4 } from "uuid";
 
@@ -34,29 +34,19 @@ function AiChat() {
     setMessagesList(result?.data?.content);
   };
 
-  const onSend = async () => {
-    if (!userInput.trim() || loading) return;
-
+  // Shared by onSend and onRetryMessage: sends a single user input string to
+  // the existing AI Career Companion API (unchanged request/response shape)
+  // and appends the assistant's reply on top of the given history.
+  const sendToAI = async (input: string, historyBeforeSend: Message[]) => {
     setLoading(true);
-
-    setMessagesList((prev) => [
-      ...prev,
-      {
-        content: userInput,
-        role: "user",
-        type: "text",
-      },
-    ]);
-    setUserInput("");
-
     try {
       const result = await axios.post("/api/ai-career-companion-agent", {
-        userInput: userInput,
+        userInput: input,
       });
       console.log("API Response:", result.data);
 
-      setMessagesList((prev) => [
-        ...prev,
+      setMessagesList([
+        ...historyBeforeSend,
         {
           content: result.data.content || "No response from AI",
           role: "assistant",
@@ -65,8 +55,8 @@ function AiChat() {
       ]);
     } catch (error) {
       console.error("Error sending message:", error);
-      setMessagesList((prev) => [
-        ...prev,
+      setMessagesList([
+        ...historyBeforeSend,
         {
           content: "Sorry, I encountered an error. Please try again.",
           role: "assistant",
@@ -76,6 +66,45 @@ function AiChat() {
     } finally {
       setLoading(false);
     }
+  };
+
+  const onSend = async () => {
+    if (!userInput.trim() || loading) return;
+
+    const updatedHistory: Message[] = [
+      ...messagesList,
+      {
+        content: userInput,
+        role: "user",
+        type: "text",
+      },
+    ];
+    setMessagesList(updatedHistory);
+    const input = userInput;
+    setUserInput("");
+
+    await sendToAI(input, updatedHistory);
+  };
+
+  // Edit only updates the stored text for that message — it does not call the
+  // AI again. The existing messagesList-change effect below persists it.
+  const onEditMessage = (index: number, newContent: string) => {
+    setMessagesList((prev) => {
+      const updated = [...prev];
+      updated[index] = { ...updated[index], content: newContent };
+      return updated;
+    });
+  };
+
+  // Retry: truncates the conversation to end at this user message (dropping
+  // whatever came after it, including a stale assistant reply), applies the
+  // latest text for that message, then requests one fresh assistant reply.
+  const onRetryMessage = async (index: number, content: string) => {
+    if (loading) return;
+    const truncated = messagesList.slice(0, index + 1);
+    truncated[index] = { ...truncated[index], content };
+    setMessagesList(truncated);
+    await sendToAI(content, truncated);
   };
 
   useEffect(() => {
@@ -133,26 +162,13 @@ function AiChat() {
           <div className="flex-1 overflow-y-auto py-4">
             {/* Message List */}
             {messagesList.map((message, index) => (
-              <div
+              <ChatMessage
                 key={index}
-                className={`flex ${
-                  message.role === "user" ? "justify-end" : "justify-start"
-                } my-2`}
-              >
-                <div
-                  className={`max-w-[80%] p-4 rounded-lg shadow-md ${
-                    message.role === "user"
-                      ? "bg-gray-300 text-gray-800"
-                      : "bg-secondary text-secondary-foreground"
-                  }`}
-                >
-                  <ReactMarkdown>
-                    {typeof message.content === "string"
-                      ? message.content
-                      : JSON.stringify(message.content)}
-                  </ReactMarkdown>
-                </div>
-              </div>
+                message={message}
+                disabled={loading}
+                onEditSave={(newContent) => onEditMessage(index, newContent)}
+                onRetry={(content) => onRetryMessage(index, content)}
+              />
             ))}
             {loading && (
               <div className="flex items-center my-4">
